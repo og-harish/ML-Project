@@ -1,0 +1,76 @@
+version: "3.9"
+
+services:
+  # ── Backend API ───────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: salesai_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://salesai:salesai@db:5432/salesai
+      - SECRET_KEY=${SECRET_KEY:-changeme}
+      - ALLOWED_ORIGINS=http://localhost:3000
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./datasets:/app/datasets
+      - ./reports:/app/reports
+    restart: unless-stopped
+    networks:
+      - salesai_net
+
+  # ── Frontend ──────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: salesai_frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - salesai_net
+
+  # ── PostgreSQL ────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: salesai_db
+    environment:
+      POSTGRES_USER: salesai
+      POSTGRES_PASSWORD: salesai
+      POSTGRES_DB: salesai
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U salesai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - salesai_net
+
+  # ── Redis (caching, optional) ─────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: salesai_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - salesai_net
+
+volumes:
+  postgres_data:
+
+networks:
+  salesai_net:
+    driver: bridge

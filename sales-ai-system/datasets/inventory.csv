@@ -1,0 +1,9 @@
+product_id,product_name,category,stock_qty,reorder_point,reorder_qty,unit_cost,unit_price
+P001,Laptop Pro X1,Electronics,315,11,192,52000,74999
+P002,Smart Watch S3,Wearables,35,21,74,15000,24999
+P003,Wireless Earbuds,Audio,91,10,185,2500,4999
+P004,USB-C Hub 7-in-1,Accessories,11,10,133,800,1999
+P005,Mechanical Keyboard,Peripherals,201,19,57,4500,8999
+P006,Monitor 27inch 4K,Electronics,295,28,145,24000,34999
+P007,Gaming Mouse RGB,Peripherals,40,15,98,1200,2999
+P008,Laptop Stand Aluminum,Accessories,330,29,177,600,1499
