@@ -169,6 +169,7 @@ Dashboard features:
 - global/region sales hotspot map
 - sales trend, rolling average, 90-day forecast, category, and profit/loss charts
 - NLP sentiment summary, narrative insight report, recommendations, and anomaly alerts
+- optional real-time sales API URL + dataset API key ingestion for CSV or JSON sales rows
 - optional Gemini API key entry for AI-powered insight narratives and prediction explanations
 - live sidebar prediction controls by region, category, forecast window, sale date, units, and discount
 - real-time manual sales prediction tab with KPI cards, bar-chart visualization, and JSON output
@@ -319,6 +320,7 @@ Upload `backend/` as a Gradio or FastAPI Space — works with free tier.
 | `OPENAI_API_KEY` | No | For AI chatbot (GPT-3.5) |
 | `GROQ_API_KEY` | No | Free LLM alternative (llama3) |
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | No | Gemini NLP insight generation for the Colab/Streamlit pipeline |
+| Dataset API key | No | Paste into the Streamlit sidebar when using a real-time sales API URL |
 | `ALLOWED_ORIGINS` | Yes | Frontend URL(s) for CORS |
 
 ---

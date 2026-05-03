@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 from io import StringIO
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 import pandas as pd
 import plotly.express as px
@@ -47,11 +49,54 @@ st.set_page_config(
 
 
 @st.cache_data(show_spinner=False)
-def get_sales_data(uploaded_file) -> pd.DataFrame:
+def get_sales_data_from_file(uploaded_file) -> pd.DataFrame:
     if uploaded_file is not None:
         raw = pd.read_csv(uploaded_file)
     else:
         raw = load_sales_data(DEFAULT_SALES_CSV)
+    return normalize_sales_columns(raw)
+
+
+def parse_api_sales_response(body: str, content_type: str) -> pd.DataFrame:
+    if "text/csv" in content_type or body.lstrip().startswith(("date,", "Date,")):
+        return pd.read_csv(StringIO(body))
+
+    payload = json.loads(body)
+    records = payload
+    if isinstance(payload, dict):
+        for key in ("data", "sales", "records", "results", "items"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                records = value
+                break
+        if isinstance(records, dict) and {"columns", "data"} <= set(records):
+            return pd.DataFrame(records["data"], columns=records["columns"])
+
+    if not isinstance(records, list):
+        raise ValueError("Sales API response must be CSV, a JSON list, or a JSON object with data/sales/records/results/items.")
+    return pd.DataFrame(records)
+
+
+def fetch_realtime_sales_data(api_url: str, api_key: str) -> pd.DataFrame:
+    headers = {
+        "Accept": "application/json,text/csv",
+        "User-Agent": "sales-prediction-dashboard/1.0",
+    }
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+        headers["X-API-Key"] = api_key
+        headers["x-api-key"] = api_key
+        headers["X-RapidAPI-Key"] = api_key
+
+    request = Request(api_url, headers=headers)
+    try:
+        with urlopen(request, timeout=20) as response:
+            body = response.read().decode("utf-8")
+            content_type = response.headers.get("Content-Type", "")
+    except URLError as exc:
+        raise ValueError(f"Unable to load real-time sales API: {exc.reason}") from exc
+
+    raw = parse_api_sales_response(body, content_type)
     return normalize_sales_columns(raw)
 
 
@@ -294,12 +339,22 @@ def main() -> None:
 
     with st.sidebar:
         st.header("Data")
+        realtime_api_url = st.text_input("Real-time sales API URL (optional)", help="Returns sales rows as CSV or JSON list/object.")
+        dataset_api_key = st.text_input("Dataset API key (optional)", type="password", help="Used only to fetch real-time sales data from the API URL.")
         api_key = st.text_input("Gemini API key (optional)", type="password", help="Used for AI-powered NLP and prediction explanations. Leave blank to use local fallback.")
         uploaded_file = st.file_uploader("Upload e-commerce sales CSV", type=["csv"])
         forecast_days = st.slider("Forecast window", 14, 180, 90, step=7)
         st.caption("Expected columns: date, region/city, product_category/category, units_sold/quantity, revenue.")
 
-    df = get_sales_data(uploaded_file)
+    if realtime_api_url.strip():
+        try:
+            df = fetch_realtime_sales_data(realtime_api_url.strip(), dataset_api_key)
+            st.sidebar.success("Loaded real-time sales API data.")
+        except ValueError as exc:
+            st.sidebar.error(str(exc))
+            st.stop()
+    else:
+        df = get_sales_data_from_file(uploaded_file)
     serialized = df.to_json(date_format="iso")
     with st.spinner("Training forecast model and generating insights..."):
         result, model, model_df = cached_model(serialized, forecast_days)
