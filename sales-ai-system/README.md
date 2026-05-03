@@ -160,7 +160,7 @@ For Google Colab, upload `sales_prediction_colab.py`, `requirements.txt`, and yo
 #### 2. Launch the Streamlit dashboard
 
 ```bash
-streamlit run dashboard.py
+python -m streamlit run dashboard.py
 ```
 
 Dashboard features:
@@ -169,7 +169,9 @@ Dashboard features:
 - global/region sales hotspot map
 - sales trend, rolling average, 90-day forecast, category, and profit/loss charts
 - NLP sentiment summary, narrative insight report, recommendations, and anomaly alerts
-- live sidebar prediction controls by region, category, and forecast window
+- optional Gemini API key entry for AI-powered insight narratives and prediction explanations
+- live sidebar prediction controls by region, category, forecast window, sale date, units, and discount
+- real-time manual sales prediction tab with KPI cards, bar-chart visualization, and JSON output
 
 #### 3. Use Google AI Studio for the NLP prompt
 

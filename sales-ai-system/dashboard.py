@@ -8,7 +8,7 @@ Run:
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from io import StringIO
 
 import pandas as pd
 import plotly.express as px
@@ -17,6 +17,9 @@ import streamlit as st
 from sales_prediction_colab import (
     DEFAULT_SALES_CSV,
     TrainingResult,
+    add_time_features,
+    aggregate_daily_sales,
+    generate_realtime_prediction_explanation,
     generate_nlp_insights,
     load_sales_data,
     normalize_sales_columns,
@@ -54,7 +57,7 @@ def get_sales_data(uploaded_file) -> pd.DataFrame:
 
 @st.cache_resource(show_spinner=False)
 def cached_model(serialized_csv: str, forecast_days: int) -> tuple[TrainingResult, object, pd.DataFrame]:
-    df = pd.read_json(serialized_csv)
+    df = pd.read_json(StringIO(serialized_csv))
     df["date"] = pd.to_datetime(df["date"])
     result, model = train_sales_model(df, forecast_days=forecast_days)
     return result, model, df
@@ -148,9 +151,9 @@ def render_geo_map(df: pd.DataFrame) -> None:
     st.dataframe(regional, use_container_width=True, hide_index=True)
 
 
-def render_nlp(df: pd.DataFrame, result: TrainingResult) -> None:
+def render_nlp(df: pd.DataFrame, result: TrainingResult, api_key: str | None) -> None:
     st.subheader("NLP-Based Insight Extraction")
-    insights = generate_nlp_insights(df, result)
+    insights = generate_nlp_insights(df, result, api_key=api_key)
 
     sentiment = insights.get("sentiment", {})
     if isinstance(sentiment, dict):
@@ -170,11 +173,41 @@ def render_nlp(df: pd.DataFrame, result: TrainingResult) -> None:
         for alert in anomalies:
             st.warning(str(alert))
 
+    if insights.get("gemini_error"):
+        st.caption("Gemini was unavailable for this run, so local NLP fallback insights are displayed.")
+
     with st.expander("Raw NLP JSON"):
         st.json(json.loads(json.dumps(insights, default=str)))
 
 
-def render_prediction_form(df: pd.DataFrame, result: TrainingResult) -> None:
+def build_realtime_features(
+    df: pd.DataFrame,
+    prediction_date: pd.Timestamp,
+    units_sold: int,
+    discount_pct: float,
+    historical_revenue: float,
+    profit_margin: float,
+) -> pd.DataFrame:
+    history = aggregate_daily_sales(df)
+    probe = pd.concat(
+        [
+            history,
+            pd.DataFrame(
+                {
+                    "date": [prediction_date],
+                    "revenue": [historical_revenue],
+                    "units_sold": [units_sold],
+                    "discount_pct": [discount_pct],
+                    "profit": [historical_revenue * profit_margin],
+                }
+            ),
+        ],
+        ignore_index=True,
+    )
+    return add_time_features(probe).tail(1)
+
+
+def render_prediction_form(df: pd.DataFrame, result: TrainingResult, model: object, api_key: str | None) -> None:
     st.sidebar.subheader("Live Prediction Inputs")
     region = st.sidebar.selectbox("Region", sorted(df["region"].unique()))
     category = st.sidebar.selectbox("Product category", sorted(df["product_category"].unique()))
@@ -187,6 +220,73 @@ def render_prediction_form(df: pd.DataFrame, result: TrainingResult) -> None:
     st.sidebar.caption(f"Based on {region} region share and the trained {result.model_name} model.")
     st.sidebar.metric("Category historical revenue", f"₹{category_revenue:,.0f}")
 
+    st.sidebar.divider()
+    st.sidebar.subheader("Real-Time Sale Predictor")
+    prediction_date = st.sidebar.date_input("Sale date", pd.to_datetime(df["date"]).max().date() + pd.Timedelta(days=1))
+    input_units = st.sidebar.number_input("Units to sell", min_value=1, value=10, step=1)
+    input_discount = st.sidebar.slider("Discount %", 0, 90, int(round(float(df["discount_pct"].mean()))))
+    segment = df[(df["region"] == region) & (df["product_category"] == category)]
+    if segment.empty:
+        segment = df[df["region"] == region]
+    baseline_revenue = float(segment["revenue"].sum() / max(segment["units_sold"].sum(), 1))
+    estimated_revenue = baseline_revenue * input_units * (1 - input_discount / 100)
+    profit_margin = float(df["profit"].sum() / max(df["revenue"].sum(), 1))
+    live_features = build_realtime_features(
+        df,
+        pd.Timestamp(prediction_date),
+        int(input_units),
+        float(input_discount),
+        estimated_revenue,
+        profit_margin,
+    )
+    predicted_sale = max(float(model.predict(live_features[result.feature_columns])[0]), 0.0)
+    expected_profit = predicted_sale * profit_margin
+    prediction_payload = {
+        "region": region,
+        "category": category,
+        "sale_date": pd.Timestamp(prediction_date).date().isoformat(),
+        "units_sold": int(input_units),
+        "discount_pct": float(input_discount),
+        "baseline_revenue_per_unit": round(baseline_revenue, 2),
+        "predicted_revenue": round(predicted_sale, 2),
+        "expected_profit": round(expected_profit, 2),
+        "model": result.model_name,
+    }
+
+    st.session_state["live_prediction"] = prediction_payload
+    st.session_state["live_prediction_explanation"] = generate_realtime_prediction_explanation(prediction_payload, api_key)
+    st.sidebar.metric("Predicted sale", f"₹{predicted_sale:,.0f}")
+    st.sidebar.metric("Expected profit", f"₹{expected_profit:,.0f}")
+
+
+def render_realtime_prediction() -> None:
+    prediction = st.session_state.get("live_prediction")
+    if not prediction:
+        st.info("Use the sidebar inputs to generate a real-time sale prediction.")
+        return
+
+    st.subheader("Real-Time Input Sale Prediction")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        metric_card("Predicted Sale", f"₹{float(prediction['predicted_revenue']):,.0f}")
+    with c2:
+        metric_card("Expected Profit", f"₹{float(prediction['expected_profit']):,.0f}")
+    with c3:
+        metric_card("Input Units", f"{int(prediction['units_sold']):,}")
+    with c4:
+        metric_card("Discount", f"{float(prediction['discount_pct']):.0f}%")
+
+    prediction_df = pd.DataFrame(
+        [
+            {"metric": "Baseline estimate", "amount": prediction["baseline_revenue_per_unit"] * prediction["units_sold"]},
+            {"metric": "Model predicted sale", "amount": prediction["predicted_revenue"]},
+            {"metric": "Expected profit", "amount": prediction["expected_profit"]},
+        ]
+    )
+    st.plotly_chart(px.bar(prediction_df, x="metric", y="amount", title="Real-Time Prediction Visualization"), use_container_width=True)
+    st.info(st.session_state.get("live_prediction_explanation", "Prediction explanation unavailable."))
+    st.json(prediction)
+
 
 def main() -> None:
     st.title("Sales Prediction System with NLP-Based Insight Extraction")
@@ -194,6 +294,7 @@ def main() -> None:
 
     with st.sidebar:
         st.header("Data")
+        api_key = st.text_input("Gemini API key (optional)", type="password", help="Used for AI-powered NLP and prediction explanations. Leave blank to use local fallback.")
         uploaded_file = st.file_uploader("Upload e-commerce sales CSV", type=["csv"])
         forecast_days = st.slider("Forecast window", 14, 180, 90, step=7)
         st.caption("Expected columns: date, region/city, product_category/category, units_sold/quantity, revenue.")
@@ -201,21 +302,23 @@ def main() -> None:
     df = get_sales_data(uploaded_file)
     serialized = df.to_json(date_format="iso")
     with st.spinner("Training forecast model and generating insights..."):
-        result, _, model_df = cached_model(serialized, forecast_days)
+        result, model, model_df = cached_model(serialized, forecast_days)
 
-    render_prediction_form(model_df, result)
+    render_prediction_form(model_df, result, model, api_key or None)
 
-    tab_overview, tab_map, tab_charts, tab_nlp, tab_data = st.tabs(
-        ["Overview", "World Map", "Forecast Charts", "NLP Insights", "Data"]
+    tab_overview, tab_realtime, tab_map, tab_charts, tab_nlp, tab_data = st.tabs(
+        ["Overview", "Real-Time Prediction", "World Map", "Forecast Charts", "NLP Insights", "Data"]
     )
     with tab_overview:
         render_overview(model_df, result)
+    with tab_realtime:
+        render_realtime_prediction()
     with tab_map:
         render_geo_map(model_df)
     with tab_charts:
         render_charts(model_df, result)
     with tab_nlp:
-        render_nlp(model_df, result)
+        render_nlp(model_df, result, api_key or None)
     with tab_data:
         st.dataframe(model_df, use_container_width=True, hide_index=True)
         st.download_button(

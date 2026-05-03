@@ -356,7 +356,7 @@ def analyze_local_sentiment(texts: Iterable[str]) -> dict[str, object]:
     return {"sentiment": sentiment, "keywords": [{"term": term, "count": count} for term, count in top_keywords]}
 
 
-def generate_nlp_insights(df: pd.DataFrame, forecast: TrainingResult) -> dict[str, object]:
+def generate_nlp_insights(df: pd.DataFrame, forecast: TrainingResult, api_key: str | None = None) -> dict[str, object]:
     text_summary = " ".join(df["customer_reviews"].dropna().astype(str).head(80))
     local = analyze_local_sentiment(df["customer_reviews"].dropna().astype(str))
     top_region = df.groupby("region")["revenue"].sum().sort_values(ascending=False).head(1)
@@ -385,11 +385,11 @@ def generate_nlp_insights(df: pd.DataFrame, forecast: TrainingResult) -> dict[st
         "keywords": local["keywords"],
     }
 
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    if not api_key or genai is None:
+    resolved_api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not resolved_api_key or genai is None:
         return fallback
 
-    genai.configure(api_key=api_key)
+    genai.configure(api_key=resolved_api_key)
     model = genai.GenerativeModel("gemini-1.5-flash")
     payload = {
         "sales_summary": {
@@ -401,12 +401,45 @@ def generate_nlp_insights(df: pd.DataFrame, forecast: TrainingResult) -> dict[st
         },
         "sample_reviews": text_summary[:5000],
     }
-    response = model.generate_content([SYSTEM_PROMPT, json.dumps(payload, default=str)])
     try:
+        response = model.generate_content([SYSTEM_PROMPT, json.dumps(payload, default=str)])
         return json.loads(response.text)
     except json.JSONDecodeError:
         fallback["gemini_narrative"] = response.text
         return fallback
+    except Exception as exc:
+        fallback["gemini_error"] = f"{exc.__class__.__name__}: Gemini insight generation unavailable"
+        return fallback
+
+
+def generate_realtime_prediction_explanation(
+    prediction_payload: dict[str, object],
+    api_key: str | None = None,
+) -> str:
+    region = prediction_payload["region"]
+    category = prediction_payload["category"]
+    predicted_revenue = float(prediction_payload["predicted_revenue"])
+    expected_profit = float(prediction_payload["expected_profit"])
+    fallback = (
+        f"{category} in {region} is predicted to generate INR {predicted_revenue:,.0f} "
+        f"with about INR {expected_profit:,.0f} expected profit. Compare this against the "
+        "selected segment baseline before committing inventory or promotion spend."
+    )
+    resolved_api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not resolved_api_key or genai is None:
+        return fallback
+
+    genai.configure(api_key=resolved_api_key)
+    model = genai.GenerativeModel("gemini-1.5-flash")
+    prompt = (
+        "Explain this real-time sales prediction in 2 concise business sentences. "
+        "Do not invent numbers beyond the JSON payload."
+    )
+    try:
+        response = model.generate_content([prompt, json.dumps(prediction_payload, default=str)])
+    except Exception:
+        return fallback
+    return response.text.strip() or fallback
 
 
 def detect_anomalies(df: pd.DataFrame) -> list[str]:
