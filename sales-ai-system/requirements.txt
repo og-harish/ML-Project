@@ -1,0 +1,9 @@
+# Colab + Streamlit dashboard requirements
+pandas==2.2.2
+numpy==1.26.4
+scikit-learn==1.4.2
+xgboost==2.0.3
+streamlit==1.35.0
+plotly==5.22.0
+google-generativeai==0.7.2
+fpdf2==2.7.9

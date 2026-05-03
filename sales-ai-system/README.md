@@ -130,6 +130,64 @@ python -m http.server 3000
 
 ---
 
+### Option 3 — Google Colab + Streamlit Dashboard
+
+Use this path when you want the exact project flow from the ML brief: import a dataset, preprocess it, predict sales, generate NLP insights, and visualize profit/loss in a dashboard.
+
+#### 1. Run the Colab-style ML pipeline
+
+```bash
+cd sales-ai-system
+pip install -r requirements.txt
+python sales_prediction_colab.py --sales-csv datasets/sales_data.csv --forecast-days 90
+```
+
+The script:
+- accepts CSV data with `date`, `region`/`city`, `product_category`/`category`, `units_sold`/`quantity`, `revenue`, optional `profit`, and optional `customer_reviews`
+- preprocesses dates, missing values, labels, lag features, rolling averages, and seasonality
+- trains XGBoost when available, with Random Forest as a fallback
+- generates 90-day revenue forecasts with confidence bounds
+- creates local NLP insights and uses Gemini when `GEMINI_API_KEY` or `GOOGLE_API_KEY` is present
+- saves outputs to `outputs/` and the trained model artifact to `models/`
+
+For Google Colab, upload `sales_prediction_colab.py`, `requirements.txt`, and your CSV, then run:
+
+```python
+!pip install -r requirements.txt
+!python sales_prediction_colab.py --sales-csv /content/your_sales_data.csv
+```
+
+#### 2. Launch the Streamlit dashboard
+
+```bash
+python -m streamlit run dashboard.py
+```
+
+Dashboard features:
+- CSV upload for real e-commerce datasets
+- KPI cards for revenue, units, profit, margin, RMSE, and model selection
+- global/region sales hotspot map
+- sales trend, rolling average, 90-day forecast, category, and profit/loss charts
+- NLP sentiment summary, narrative insight report, recommendations, and anomaly alerts
+- optional real-time sales API URL + dataset API key ingestion for CSV or JSON sales rows
+- optional Gemini API key entry for AI-powered insight narratives and prediction explanations
+- live sidebar prediction controls by region, category, forecast window, sale date, units, and discount
+- real-time manual sales prediction tab with KPI cards, bar-chart visualization, and JSON output
+
+#### 3. Use Google AI Studio for the NLP prompt
+
+Paste this into Google AI Studio as the system prompt when you want Gemini to power the NLP report:
+
+```text
+You are an expert sales analyst AI embedded in a Sales Prediction Dashboard.
+Return valid JSON with keys: sentiment, entities, narrative, recommendations, anomalies.
+Analyze structured sales data and customer review text. Explain what is selling well,
+what is underperforming, what the business is lacking, and what actions should be taken.
+Be concise, data-driven, and do not hallucinate numbers.
+```
+
+---
+
 ## 🔐 Authentication
 
 The API uses JWT Bearer tokens.
@@ -261,6 +319,8 @@ Upload `backend/` as a Gradio or FastAPI Space — works with free tier.
 | `DATABASE_URL` | Yes | SQLite (default) or PostgreSQL |
 | `OPENAI_API_KEY` | No | For AI chatbot (GPT-3.5) |
 | `GROQ_API_KEY` | No | Free LLM alternative (llama3) |
+| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | No | Gemini NLP insight generation for the Colab/Streamlit pipeline |
+| Dataset API key | No | Paste into the Streamlit sidebar when using a real-time sales API URL |
 | `ALLOWED_ORIGINS` | Yes | Frontend URL(s) for CORS |
 
 ---
